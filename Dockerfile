@@ -5,6 +5,9 @@ FROM node:22.12-alpine AS builder
 # Set the working directory inside the container
 WORKDIR /app
 
+# Install git for dependencies
+RUN apk add --no-cache git
+
 # Copy package.json and package-lock.json to the container
 COPY package.json package-lock.json ./
 
