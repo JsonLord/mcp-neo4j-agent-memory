@@ -1,49 +1,39 @@
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import express from 'express';
 import { Neo4jClient } from './neo4j-client.js';
 import { Neo4jServerConfig } from './types.js';
-import { tools } from './tools/definitions.js';
 import { handleToolCall } from './handlers/index.js';
 
 export class Neo4jServer {
-  private server: Server;
   private neo4j: Neo4jClient | null;
 
   constructor(config?: Neo4jServerConfig) {
-    this.server = new Server(
-      {
-        name: 'mcp-neo4j-agent-memory',
-        version: '1.0.0',
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
-    );
-
     this.neo4j = config ? new Neo4jClient(config.uri, config.username, config.password, config.database) : null;
-    this.setupToolHandlers();
-
-    // Error handling
-    this.server.onerror = (error) => console.error('[MCP Error]', error);
     process.on('SIGINT', async () => {
       await this.close();
       process.exit(0);
     });
+    process.on('SIGTERM', async () => {
+        await this.close();
+        process.exit(0);
+    });
   }
 
-  private setupToolHandlers(): void {
-    // Tool list handler
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools,
-    }));
+  async start(): Promise<void> {
+    const app = express();
+    app.use(express.json());
+    const port = process.env.PORT || 3000;
 
-    // Tool execution handler
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    app.get('/health-check', (_req, res) => {
+      res.status(200).json({ status: 'online', message: 'Neo4j MCP Server is running' });
+    });
+
+    app.get('/', (_req, res) => {
+        res.status(200).json({ status: 'online', message: 'Neo4j MCP Server is running' });
+    });
+
+    app.post('/mcp', async (req, res) => {
       if (!this.neo4j) {
-        return {
+        return res.status(500).json({
           content: [
             {
               type: 'text',
@@ -51,23 +41,43 @@ export class Neo4jServer {
             },
           ],
           isError: true,
-        };
+        });
       }
-      const { name, arguments: args } = request.params;
-      return handleToolCall(name, args, this.neo4j);
+      try {
+        const { name, arguments: args } = req.body;
+        if (!name || args === undefined) {
+          return res.status(400).json({
+            content: [{
+              type: 'text',
+              text: 'Bad Request: "name" and "arguments" are required in the request body.'
+            }],
+            isError: true,
+          });
+        }
+        const result = await handleToolCall(name, args, this.neo4j);
+        res.status(200).json(result);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'An unknown error occurred';
+        res.status(500).json({
+            content: [{
+                type: 'text',
+                text: message,
+            }],
+            isError: true,
+        });
+      }
     });
-  }
 
-  async run(): Promise<void> {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.error('Neo4j MCP server running on stdio');
+    app.listen(port, () => {
+      console.error(`Neo4j MCP server running on http://localhost:${port}`);
+    });
   }
 
   async close(): Promise<void> {
     if (this.neo4j) {
+      console.error('Closing Neo4j connection...');
       await this.neo4j.close();
+      console.error('Neo4j connection closed.');
     }
-    await this.server.close();
   }
 }

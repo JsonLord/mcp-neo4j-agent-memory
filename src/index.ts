@@ -44,28 +44,7 @@ const config = hasDbConfig ? {
 // サーバーの起動
 const server = new Neo4jServer(config);
 
-server.run().catch((error) => {
+server.start().catch((error) => {
   console.error('Failed to start Neo4j MCP server:', error);
   process.exit(1);
-});
-
-// 終了時のクリーンアップ
-process.on('SIGINT', async () => {
-  try {
-    await server.close();
-    process.exit(0);
-  } catch (error) {
-    console.error('Error during shutdown:', error);
-    process.exit(1);
-  }
-});
-
-process.on('SIGTERM', async () => {
-  try {
-    await server.close();
-    process.exit(0);
-  } catch (error) {
-    console.error('Error during shutdown:', error);
-    process.exit(1);
-  }
 });
